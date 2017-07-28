@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8)
 
 project(dressup)
 
-find_package( openpose COMPONENTS wrapper REQUIRED )
+find_package( openpose COMPONENTS wrapper pose REQUIRED )
 find_package( Caffe REQUIRED )
 find_package( OpenCV 3 REQUIRED )
 
@@ -27,7 +27,7 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/models/pose/coco/pose_deploy_linevec.proto
 if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/models/pose/coco/pose_iter_440000.caffemodel")
 else()
     message(STATUS "downloading caffemodel")
-    file(DOWNLOAD "http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/coco/pose_iter_440000.caffemodel"
-        "${CMAKE_CURRENT_BINARY_DIR}/models/pose/coco/pose_iter_440000.caffemodel")
+    #file(DOWNLOAD "http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/coco/pose_iter_440000.caffemodel"
+    #    "${CMAKE_CURRENT_BINARY_DIR}/models/pose/coco/pose_iter_440000.caffemodel")
     message(STATUS "caffemodel downloaded")
 endif()
