@@ -2,7 +2,6 @@ version: '2'
 services:
   dressup:
     build: .
-    privileged: true
     environment:
      - DISPLAY=$DISPLAY
      - QT_X11_NOMITSHM=1
