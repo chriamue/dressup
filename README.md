@@ -13,7 +13,7 @@ Icon made by [Freepik](https://www.flaticon.com/authors/freepik) from www.flatic
 Icon made by [Freepik](https://www.flaticon.com/authors/freepik) from www.flaticon.com
 
 ## run as docker
-'''bash
+```bash
 xhost +
 nvidia-docker run --rm --device=/dev/video0 -e DISPLAY=$DISPLAY -v '/tmp/.X11-unix:/tmp/.X11-unix' chriamue/dressup
-'''
+```

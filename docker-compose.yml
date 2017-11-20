@@ -5,6 +5,7 @@ services:
     environment:
      - DISPLAY=$DISPLAY
      - QT_X11_NOMITSHM=1
+    privileged: true
     volumes:
      - '/tmp/.X11-unix:/tmp/.X11-unix'
     devices:

@@ -9,7 +9,6 @@
 #include <string>
 // 3rdparty dependencies
 #include <gflags/gflags.h> // DEFINE_bool, DEFINE_int32, DEFINE_int64, DEFINE_uint64, DEFINE_double, DEFINE_string
-#include <glog/logging.h>  // google::InitGoogleLogging
 // OpenPose dependencies
 #include <openpose/core/headers.hpp>
 #include <openpose/filestream/headers.hpp>
@@ -27,12 +26,12 @@ DEFINE_string(image_path, "examples/media/COCO_val2014_000000000192.jpg", "Proce
 // OpenPose
 DEFINE_string(model_pose, "COCO", "Model to be used (e.g. COCO, MPI, MPI_4_layers).");
 DEFINE_string(model_folder, "models/", "Folder path (absolute or relative) where the models (pose, face, ...) are located.");
-DEFINE_string(net_resolution, "656x368", "Multiples of 16. If it is increased, the accuracy potentially increases. If it is decreased,"
-                                         " the speed increases. For maximum speed-accuracy balance, it should keep the closest aspect"
-                                         " ratio possible to the images or videos to be processed. E.g. the default `656x368` is"
-                                         " optimal for 16:9 videos, e.g. full HD (1980x1080) and HD (1280x720) videos.");
-DEFINE_string(resolution, "1280x720", "The image resolution (display and output). Use \"-1x-1\" to force the program to use the"
-                                      " default images resolution.");
+DEFINE_string(net_resolution, "-1x368", "Multiples of 16. If it is increased, the accuracy potentially increases. If it is decreased,"
+                                        " the speed increases. For maximum speed-accuracy balance, it should keep the closest aspect"
+                                        " ratio possible to the images or videos to be processed. E.g. the default `656x368` is"
+                                        " optimal for 16:9 videos, e.g. full HD (1980x1080) and HD (1280x720) videos.");
+DEFINE_string(output_resolution, "-1x-1", "The image resolution (display and output). Use \"-1x-1\" to force the program to use the"
+                                          " default images resolution.");
 DEFINE_int32(num_gpu_start, 0, "GPU device start number.");
 DEFINE_double(scale_gap, 0.3, "Scale gap between scales. No effect unless scale_number > 1. Initial scale is always 1."
                               " If you want to change the initial scale, you actually want to multiply the"
@@ -349,11 +348,9 @@ int dressup()
     op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
     // Step 2 - Read Google flags (user defined configuration)
     // outputSize
-    const auto outputSize = op::flagsToPoint(FLAGS_resolution, "1280x720");
+    const auto outputSize = op::flagsToPoint(FLAGS_output_resolution, "-1x-1");
     // netInputSize
-    const auto netInputSize = op::flagsToPoint(FLAGS_net_resolution, "656x368");
-    // netOutputSize
-    const auto netOutputSize = netInputSize;
+    const auto netInputSize = op::flagsToPoint(FLAGS_net_resolution, "-1x368");
     // poseModel
     const auto poseModel = op::flagsToPoseModel(FLAGS_model_pose);
     // Check no contradictory flags enabled
@@ -364,59 +361,65 @@ int dressup()
     // Logging
     op::log("", op::Priority::Low, __LINE__, __FUNCTION__, __FILE__);
     // Step 3 - Initialize all required classes
-    op::CvMatToOpInput cvMatToOpInput{netInputSize, FLAGS_scale_number, (float)FLAGS_scale_gap};
-    op::CvMatToOpOutput cvMatToOpOutput{outputSize};
-    op::PoseExtractorCaffe poseExtractorCaffe{netInputSize, netOutputSize, outputSize, FLAGS_scale_number, poseModel,
-                                              FLAGS_model_folder, FLAGS_num_gpu_start};
-    op::PoseRenderer poseRenderer{netOutputSize, outputSize, poseModel, nullptr, (float)FLAGS_render_threshold,
-                                  !FLAGS_disable_blending, (float)FLAGS_alpha_pose};
-    op::OpOutputToCvMat opOutputToCvMat{outputSize};
+    op::ScaleAndSizeExtractor scaleAndSizeExtractor(netInputSize, outputSize, FLAGS_scale_number, FLAGS_scale_gap);
+    op::CvMatToOpInput cvMatToOpInput;
+    op::CvMatToOpOutput cvMatToOpOutput;
+    auto poseExtractorPtr = std::make_shared<op::PoseExtractorCaffe>(
+        poseModel, FLAGS_model_folder, FLAGS_num_gpu_start, std::vector<op::HeatMapType>{}, op::ScaleMode::ZeroToOne,
+        true);
+
+    op::PoseGpuRenderer poseRenderer{poseModel, poseExtractorPtr, (float)FLAGS_render_threshold,
+                                     !FLAGS_disable_blending, (float)FLAGS_alpha_pose, (float)FLAGS_alpha_heatmap};
+    poseRenderer.setElementToRender(FLAGS_part_to_show);
+
+    op::OpOutputToCvMat opOutputToCvMat;
     const op::Point<int> windowedSize = outputSize;
-    op::FrameDisplayer frameDisplayer{windowedSize, "OpenPose Tutorial - Example 1"};
+    op::FrameDisplayer frameDisplayer{"Dressup", outputSize};
     // Step 4 - Initialize resources on desired thread (in this case single thread, i.e. we init resources here)
-    poseExtractorCaffe.initializationOnThread();
+    poseExtractorPtr->initializationOnThread();
     poseRenderer.initializationOnThread();
 
     // ------------------------- POSE ESTIMATION AND RENDERING -------------------------
     // Step 1 - Read and load image, error if empty (possibly wrong path)
-
     cv::Mat inputImage; // = op::loadImage(FLAGS_image_path, CV_LOAD_IMAGE_COLOR); // Alternative: cv::imread(FLAGS_image_path, CV_LOAD_IMAGE_COLOR);
     cap >> inputImage;
     if (inputImage.empty())
         op::error("Could not open or find the image: " + FLAGS_image_path, __LINE__, __FUNCTION__, __FILE__);
-    // Step 2 - Format input image to OpenPose input and output formats
-    op::Array<float> netInputArray;
-    std::vector<float> scaleRatios;
 
-    double scaleInputToOutput;
-    op::Array<float> outputArray;
-
-    const auto thicknessCircleRatio = 1.f / 75.f;
-    const auto thicknessLineRatioWRTCircle = 0.75f;
-    const auto &pairs = op::POSE_BODY_PART_PAIRS_RENDER[(int)poseModel];
+    const op::Point<int> imageSize{inputImage.cols, inputImage.rows};
+    // Step 2 - Get desired scale sizes
+    std::vector<double> scaleInputToNetInputs;
+    std::vector<op::Point<int>> netInputSizes;
+    double scaleInputToOutput = 1.f;
+    op::Point<int> outputResolution;
+    std::tie(scaleInputToNetInputs, netInputSizes, scaleInputToOutput, outputResolution) = scaleAndSizeExtractor.extract(imageSize);
 
     char c = 'q';
-
     do
     {
         cap >> inputImage;
-        if (inputImage.empty())
-            op::error("Could not open or find the image: " + FLAGS_image_path, __LINE__, __FUNCTION__, __FILE__);
-        std::tie(netInputArray, scaleRatios) = cvMatToOpInput.format(inputImage);
-        std::tie(scaleInputToOutput, outputArray) = cvMatToOpOutput.format(inputImage);
 
-        // Step 3 - Estimate poseKeypoints
-        poseExtractorCaffe.forwardPass(netInputArray, {inputImage.cols, inputImage.rows}, scaleRatios);
-        op::Array<float> poseKeypoints = poseExtractorCaffe.getPoseKeypoints();
-        const auto scaleNetToOutput = poseExtractorCaffe.getScaleNetToOutput();
+        // Step 3 - Format input image to OpenPose input and output formats
+        const auto netInputArray = cvMatToOpInput.createArray(inputImage, scaleInputToNetInputs, netInputSizes);
+        auto outputArray = cvMatToOpOutput.createArray(inputImage, scaleInputToOutput, outputResolution);
+        // Step 4 - Estimate poseKeypoints
+        poseExtractorPtr->forwardPass(netInputArray, imageSize, scaleInputToNetInputs);
+        const auto poseKeypoints = poseExtractorPtr->getPoseKeypoints();
+        const auto scaleNetToOutput = poseExtractorPtr->getScaleNetToOutput();
+        // Step 5 - Render pose
+        poseRenderer.renderPose(outputArray, poseKeypoints, scaleInputToOutput, scaleNetToOutput);
+        // Step 6 - OpenPose output format to cv::Mat
 
-        // Step 5 - OpenPose output format to cv::Mat
+        const auto thicknessCircleRatio = 1.f / 75.f;
+        const auto thicknessLineRatioWRTCircle = 0.75f;
+        const auto &pairs = op::POSE_BODY_PART_PAIRS_RENDER[(int)poseModel];
+
         auto outputImage = opOutputToCvMat.formatToCvMat(outputArray);
-
-        // ------------------------- SHOWING RESULT AND CLOTHES -------------------------
-
         renderKeypoints(outputImage, poseKeypoints, pairs, op::POSE_COLORS[(int)poseModel], thicknessCircleRatio,
                         thicknessLineRatioWRTCircle, (float)FLAGS_render_threshold, scaleNetToOutput);
+        // ------------------------- SHOWING RESULT AND CLOSING -------------------------
+        // Step 1 - Show results
+        //frameDisplayer.displayFrame(outputImage, 0); // Alternative: cv::imshow(outputImage) + cv::waitKey(0)
         cv::imshow("dressup - openpose example", outputImage);
         c = cv::waitKey(100);
     } while (c != 'y' && c != 'n');
@@ -428,9 +431,6 @@ int dressup()
 
 int main(int argc, char *argv[])
 {
-    // Initializing google logging (Caffe uses it for logging)
-    google::InitGoogleLogging("dressup - openpose example");
-
     // Parsing command line flags
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 

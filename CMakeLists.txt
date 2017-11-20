@@ -2,17 +2,15 @@ cmake_minimum_required(VERSION 2.8)
 
 project(dressup)
 
-find_package( openpose COMPONENTS wrapper pose REQUIRED )
-find_package( Caffe REQUIRED )
+find_package( OpenPose COMPONENTS REQUIRED )
 find_package( OpenCV REQUIRED )
+find_package( gflags REQUIRED )
 
 add_executable(${PROJECT_NAME} "main.cpp")
 
-add_definitions( -DUSE_CAFFE)
-
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
-
-target_link_libraries(${PROJECT_NAME} ${Caffe_LIBRARIES} ${OpenCV_LIBS} openpose::wrapper)
+message(STATUS ${OpenPose_FOUND} ${OpenPose_LIBS} ${GFLAGS_LIBS})
+target_link_libraries(${PROJECT_NAME} ${OpenPose_LIBS} ${OpenCV_LIBS} gflags)
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/scarf.png
     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/)
